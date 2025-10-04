@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, TextIO, Tuple
 
 from .executors import Executor, InProcessExecutor
+from .logging import StepLogger, StructuredLogger
 
 Action = Callable[[Dict[str, Any], Any], Any]
 Decision = Callable[[Dict[str, Any], "Result", "Enqueue"], None]
@@ -165,6 +166,8 @@ class Workflow:
         max_steps: int = 10000,
         capture_trace: bool = True,
         executor: Optional[Executor] = None,
+        logger_sink: Optional[TextIO] = None,
+        logger: Optional[StepLogger] = None,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         if start not in self._steps:
             raise UnknownStep(start)
@@ -174,6 +177,13 @@ class Workflow:
         trace: List[Dict[str, Any]] = []
         steps_run = 0
         default_executor = executor or self._default_executor
+        step_logger: Optional[StepLogger]
+        if logger is not None:
+            step_logger = logger
+        elif logger_sink is not None:
+            step_logger = StructuredLogger(logger_sink)
+        else:
+            step_logger = None
 
         while queue:
             if steps_run >= max_steps:
@@ -198,6 +208,9 @@ class Workflow:
 
             if capture_trace:
                 trace.append(self._trace_entry(step.name, token, result, queue))
+
+            if step_logger is not None:
+                step_logger.log(step.name, token.payload, result)
 
             steps_run += 1
 

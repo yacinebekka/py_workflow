@@ -200,6 +200,51 @@ class TestWorkflowExecution:
             },
         }
 
+    def test_workflow_emits_structured_logs_to_configured_sink(self):
+        from io import StringIO
+
+        workflow = Workflow(name="logging-flow").add(
+            Step(
+                name="step_one",
+                action=lambda ctx, payload: payload + ["one"],
+                decision=lambda ctx, result, enqueue: enqueue.tail(
+                    "step_two", result.value
+                ),
+            ),
+            Step(
+                name="step_two",
+                action=lambda ctx, payload: payload + ["two"],
+            ),
+        )
+
+        buffer = StringIO()
+        executor = self._make_executor()
+
+        context, trace = workflow.run(
+            start="step_one",
+            payload=[],
+            ctx={},
+            executor=executor,
+            logger_sink=buffer,
+        )
+
+        log_lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
+
+        assert len(log_lines) == 2
+        assert all("timestamp" in line for line in log_lines)
+        assert "step=step_one" in log_lines[0]
+        assert "payload=[]" in log_lines[0]
+        assert "result=['one']" in log_lines[0]
+        assert "error=None" in log_lines[0]
+
+        assert "step=step_two" in log_lines[1]
+        assert "payload=['one']" in log_lines[1]
+        assert "result=['one', 'two']" in log_lines[1]
+        assert "error=None" in log_lines[1]
+
+        assert context["result.step_two"] == ["one", "two"]
+        assert [entry["step"] for entry in trace] == ["step_one", "step_two"]
+
     def _load_work_action(self, context, payload):
         assert payload["batch_id"] == context["batch_id"]
         context.setdefault("events", []).append("load-work")

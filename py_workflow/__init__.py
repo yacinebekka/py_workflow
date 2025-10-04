@@ -9,6 +9,7 @@ from .engine import (
     decide_to,
 )
 from .executors import Executor, InProcessExecutor
+from .logging import StepLogger, StructuredLogger
 
 __all__ = [
     "Enqueue",
@@ -21,4 +22,6 @@ __all__ = [
     "decide_to",
     "Executor",
     "InProcessExecutor",
+    "StepLogger",
+    "StructuredLogger",
 ]
