@@ -27,11 +27,11 @@ class TestInProcessExecutor:
 
         executor = InProcessExecutor()
 
-        context, trace = executor.run(
-            workflow,
+        context, trace = workflow.run(
             start="start",
             payload=None,
             ctx={},
+            executor=executor,
         )
 
         assert context["log"] == ["start", "finish"]
@@ -56,7 +56,7 @@ class TestInProcessExecutor:
 
         executor = InProcessExecutor()
 
-        context, trace = executor.run(workflow, start="boom")
+        context, trace = workflow.run(start="boom", executor=executor)
 
         assert context["recovered"] == "ok"
         assert context["result.boom"] is None

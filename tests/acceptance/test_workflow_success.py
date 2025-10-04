@@ -29,11 +29,11 @@ class TestWorkflowExecution:
 
         executor = self._make_executor()
 
-        context, trace = executor.run(
-            workflow,
+        context, trace = workflow.run(
             start="load_work",
             payload=initial_payload,
             ctx=initial_context,
+            executor=executor,
         )
 
         assert context["handled_orders"] == [
@@ -120,11 +120,11 @@ class TestWorkflowExecution:
 
         executor = self._make_executor()
 
-        context, trace = executor.run(
-            workflow,
+        context, trace = workflow.run(
             start="load_orders",
             payload={"batch_id": "B-99"},
             ctx={"events": []},
+            executor=executor,
         )
 
         assert context["attempt_log"]["requires-retry"] == [1, 2]
