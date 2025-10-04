@@ -62,4 +62,6 @@ class StepLogHelper:
         self._step_name = step_name
 
     def event(self, name: str, **data: Any) -> None:
-        self._logger.event(self._step_name, name, **data)
+        event_fn = getattr(self._logger, "event", None)
+        if callable(event_fn):
+            event_fn(self._step_name, name, **data)

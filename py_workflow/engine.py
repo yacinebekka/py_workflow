@@ -159,21 +159,6 @@ class Workflow:
             "queue_len_after": len(queue),
         }
 
-    def _call_decision(
-        self,
-        decision: Decision,
-        context: Dict[str, Any],
-        result: Result,
-        enqueue: Enqueue,
-        log_helper: Optional[StepLogHelper],
-    ) -> None:
-        call_with_optional_helper(
-            decision,
-            (context, result, enqueue),
-            log_helper,
-            base_arg_count=3,
-        )
-
     def run(
         self,
         start: str,
@@ -222,12 +207,11 @@ class Workflow:
 
             enqueue = Enqueue(queue, default_payload=result.value)
             if step.decision:
-                self._call_decision(
+                call_with_optional_helper(
                     step.decision,
-                    context,
-                    result,
-                    enqueue,
+                    (context, result, enqueue),
                     log_helper,
+                    base_arg_count=3,
                 )
 
             self._store_result(context, step.name, result)
