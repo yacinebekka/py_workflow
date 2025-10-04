@@ -1,6 +1,6 @@
 import pytest
 
-from py_workflow import Step, Workflow
+from py_workflow import Step, StructuredLogger, Workflow
 
 
 @pytest.mark.acceptance
@@ -244,6 +244,77 @@ class TestWorkflowExecution:
 
         assert context["result.step_two"] == ["one", "two"]
         assert [entry["step"] for entry in trace] == ["step_one", "step_two"]
+
+    def test_logging_helper_allows_steps_to_emit_custom_events(self):
+        from io import StringIO
+
+        def fetch_action(ctx, payload, log):
+            log.event("starting", payload=payload)
+            return {"items": [1, 2]}
+
+        def fetch_decision(ctx, result, enqueue, log):
+            log.event("queued", size=len(result.value["items"]))
+            for item in result.value["items"]:
+                enqueue.tail("process_item", item)
+
+        def process_action(ctx, payload, log):
+            log.event("processing", item=payload)
+            ctx.setdefault("processed", []).append(payload)
+            return payload * 10
+
+        workflow = Workflow(name="helper-logging").add(
+            Step(
+                name="fetch",
+                action=fetch_action,
+                decision=fetch_decision,
+            ),
+            Step(
+                name="process_item",
+                action=process_action,
+            ),
+        )
+
+        buffer = StringIO()
+        executor = self._make_executor()
+
+        context, trace = workflow.run(
+            start="fetch",
+            payload={"batch": "b-1"},
+            ctx={},
+            executor=executor,
+            logger_sink=buffer,
+        )
+
+        log_lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
+        event_lines = [line for line in log_lines if "event=" in line]
+
+        assert len(event_lines) == 4
+        assert "event=starting" in event_lines[0]
+        assert "payload={'batch': 'b-1'}" in event_lines[0]
+        assert "event=queued" in event_lines[1]
+        assert "size=2" in event_lines[1]
+        assert "event=processing" in event_lines[2]
+        assert "item=1" in event_lines[2]
+        assert "event=processing" in event_lines[3]
+        assert "item=2" in event_lines[3]
+
+        step_lines = [line for line in log_lines if "event=" not in line]
+        import re
+
+        assert [
+            re.search(r"step=([^\s]+)", line).group(1) for line in step_lines
+        ] == [
+            "fetch",
+            "process_item",
+            "process_item",
+        ]
+
+        assert context["processed"] == [1, 2]
+        assert [entry["step"] for entry in trace] == [
+            "fetch",
+            "process_item",
+            "process_item",
+        ]
 
     def _load_work_action(self, context, payload):
         assert payload["batch_id"] == context["batch_id"]

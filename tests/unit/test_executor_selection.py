@@ -6,7 +6,7 @@ class RecordingExecutor:
         self.label = label
         self.calls = []
 
-    def execute(self, step, context, payload):
+    def execute(self, step, context, payload, helper=None):
         self.calls.append((self.label, step.name, payload))
         return step.action(context, payload)
 

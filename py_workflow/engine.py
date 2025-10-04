@@ -4,11 +4,12 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Deque, Dict, List, Optional, TextIO, Tuple
 
+from ._callable_utils import call_with_optional_helper
 from .executors import Executor, InProcessExecutor
-from .logging import StepLogger, StructuredLogger
+from .logging import StepLogHelper, StepLogger, StructuredLogger
 
-Action = Callable[[Dict[str, Any], Any], Any]
-Decision = Callable[[Dict[str, Any], "Result", "Enqueue"], None]
+Action = Callable[..., Any]
+Decision = Callable[..., None]
 
 
 @dataclass
@@ -123,10 +124,11 @@ class Workflow:
         context: Dict[str, Any],
         payload: Any,
         default_executor: Executor,
+        log_helper: Optional[StepLogHelper],
     ) -> Result:
         executor = self._resolve_executor(step, default_executor)
         try:
-            value = executor.execute(step, context, payload)
+            value = executor.execute(step, context, payload, helper=log_helper)
             return Result(ok=True, value=value)
         except BaseException as exc:  # pragma: no cover
             return Result(ok=False, value=None, error=exc)
@@ -157,6 +159,21 @@ class Workflow:
             "queue_len_after": len(queue),
         }
 
+    def _call_decision(
+        self,
+        decision: Decision,
+        context: Dict[str, Any],
+        result: Result,
+        enqueue: Enqueue,
+        log_helper: Optional[StepLogHelper],
+    ) -> None:
+        call_with_optional_helper(
+            decision,
+            (context, result, enqueue),
+            log_helper,
+            base_arg_count=3,
+        )
+
     def run(
         self,
         start: str,
@@ -177,9 +194,8 @@ class Workflow:
         trace: List[Dict[str, Any]] = []
         steps_run = 0
         default_executor = executor or self._default_executor
-        step_logger: Optional[StepLogger]
         if logger is not None:
-            step_logger = logger
+            step_logger: Optional[StepLogger] = logger
         elif logger_sink is not None:
             step_logger = StructuredLogger(logger_sink)
         else:
@@ -193,16 +209,26 @@ class Workflow:
 
             token = queue.popleft()
             step = self._require_step(token.step)
+            log_helper = (
+                StepLogHelper(step_logger, step.name) if step_logger else None
+            )
             result = self._execute_step(
                 step,
                 context,
                 token.payload,
                 default_executor,
+                log_helper,
             )
 
             enqueue = Enqueue(queue, default_payload=result.value)
             if step.decision:
-                step.decision(context, result, enqueue)
+                self._call_decision(
+                    step.decision,
+                    context,
+                    result,
+                    enqueue,
+                    log_helper,
+                )
 
             self._store_result(context, step.name, result)
 
