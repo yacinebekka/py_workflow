@@ -92,6 +92,108 @@ class TestWorkflowExecution:
             "status": "completed",
         }
 
+    def test_workflow_with_retry_and_merge(self):
+        workflow = Workflow(name="retry-flow").add(
+            Step(
+                name="load_orders",
+                action=self._retry_load_orders_action,
+                decision=self._retry_load_orders_decision,
+            ),
+            Step(
+                name="process_order",
+                action=self._retry_process_order_action,
+                decision=self._retry_process_order_decision,
+            ),
+            Step(
+                name="collect_order",
+                action=self._retry_collect_order_action,
+                decision=self._retry_collect_order_decision,
+            ),
+            Step(
+                name="finalize_batch",
+                action=self._retry_finalize_batch_action,
+            ),
+        )
+
+        context, trace = workflow.run(
+            start="load_orders",
+            payload={"batch_id": "B-99"},
+            ctx={"events": []},
+        )
+
+        assert context["attempt_log"]["requires-retry"] == [1, 2]
+        assert context["attempt_log"]["priority-first"] == [1]
+        assert context["attempt_log"]["normal-done"] == [1]
+        assert context["collected_orders"] == [
+            {
+                "order_id": "priority-first",
+                "attempt": 1,
+                "status": "processed",
+            },
+            {
+                "order_id": "requires-retry",
+                "attempt": 2,
+                "status": "processed",
+            },
+            {
+                "order_id": "normal-done",
+                "attempt": 1,
+                "status": "processed",
+            },
+        ]
+        assert context["result.finalize_batch"] == {
+            "batch_id": "B-99",
+            "total_orders": 3,
+            "processed_order_ids": [
+                "priority-first",
+                "requires-retry",
+                "normal-done",
+            ],
+            "attempt_log": {
+                "priority-first": [1],
+                "requires-retry": [1, 2],
+                "normal-done": [1],
+            },
+        }
+
+        assert [entry["step"] for entry in trace] == [
+            "load_orders",
+            "process_order",
+            "collect_order",
+            "process_order",
+            "process_order",
+            "collect_order",
+            "process_order",
+            "collect_order",
+            "finalize_batch",
+        ]
+        assert [entry["ok"] for entry in trace] == [
+            True,
+            True,
+            True,
+            False,
+            True,
+            True,
+            True,
+            True,
+            True,
+        ]
+        assert "retry needed" in trace[3]["error"]
+        assert trace[-1]["value"] == {
+            "batch_id": "B-99",
+            "total_orders": 3,
+            "processed_order_ids": [
+                "priority-first",
+                "requires-retry",
+                "normal-done",
+            ],
+            "attempt_log": {
+                "priority-first": [1],
+                "requires-retry": [1, 2],
+                "normal-done": [1],
+            },
+        }
+
     def _load_work_action(self, context, payload):
         assert payload["batch_id"] == context["batch_id"]
         context.setdefault("events", []).append("load-work")
@@ -135,4 +237,104 @@ class TestWorkflowExecution:
             "batch_id": payload["batch_id"],
             "processed_orders": list(context["handled_orders"]),
             "status": "completed",
+        }
+
+    # === Helpers for retry/merge workflow ===
+
+    def _retry_load_orders_action(self, context, payload):
+        context["batch_id"] = payload["batch_id"]
+        context["total_orders"] = 3
+        context.setdefault("attempt_log", {})
+        context.setdefault("events", []).append("load-orders")
+        return {
+            "priority": [
+                {
+                    "order_id": "priority-first",
+                    "requires_retry": False,
+                },
+            ],
+            "normal": [
+                {
+                    "order_id": "requires-retry",
+                    "requires_retry": True,
+                },
+                {
+                    "order_id": "normal-done",
+                    "requires_retry": False,
+                },
+            ],
+        }
+
+    def _retry_load_orders_decision(self, context, result, enqueue):
+        assert result.ok is True
+
+        for order in result.value["normal"]:
+            enqueue.tail("process_order", {"order": order, "attempt": 1})
+
+        for order in reversed(result.value["priority"]):
+            enqueue.head("process_order", {"order": order, "attempt": 1})
+
+    def _retry_process_order_action(self, context, payload):
+        order = payload["order"]
+        attempt = payload["attempt"]
+        order_id = order["order_id"]
+
+        attempts = context.setdefault("attempt_log", {}).setdefault(order_id, [])
+        attempts.append(attempt)
+        context.setdefault("events", []).append(
+            f"process:{order_id}:attempt-{attempt}"
+        )
+        context["last_payload"] = payload
+
+        if order["requires_retry"] and attempt == 1:
+            raise RuntimeError(f"retry needed for {order_id}")
+
+        return {
+            "order_id": order_id,
+            "attempt": attempt,
+            "status": "processed",
+        }
+
+    def _retry_process_order_decision(self, context, result, enqueue):
+        if not result:
+            payload = context["last_payload"]
+            enqueue.head(
+                "process_order",
+                {
+                    "order": payload["order"],
+                    "attempt": payload["attempt"] + 1,
+                },
+            )
+            return
+
+        enqueue.head("collect_order", result.value)
+
+    def _retry_collect_order_action(self, context, payload):
+        collected = context.setdefault("collected_orders", [])
+        collected.append(payload)
+        context.setdefault("events", []).append(
+            f"collect:{payload['order_id']}"
+        )
+        return list(collected)
+
+    def _retry_collect_order_decision(self, context, result, enqueue):
+        if len(context.get("collected_orders", [])) == context.get("total_orders"):
+            enqueue.tail(
+                "finalize_batch",
+                {
+                    "batch_id": context["batch_id"],
+                    "orders": list(context["collected_orders"]),
+                    "attempt_log": context["attempt_log"],
+                },
+            )
+
+    def _retry_finalize_batch_action(self, context, payload):
+        context.setdefault("events", []).append("finalize")
+        return {
+            "batch_id": payload["batch_id"],
+            "total_orders": len(payload["orders"]),
+            "processed_order_ids": [
+                order["order_id"] for order in payload["orders"]
+            ],
+            "attempt_log": payload["attempt_log"],
         }
