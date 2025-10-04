@@ -1,3 +1,6 @@
 AGENTS.md
 TODO.md
 .venv
+.pyc
+__pycache__
+.gitignore
