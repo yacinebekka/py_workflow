@@ -27,7 +27,10 @@ class TestWorkflowExecution:
         initial_payload = {"batch_id": "batch-42"}
         initial_context = {"batch_id": "batch-42", "events": []}
 
-        context, trace = workflow.run(
+        executor = self._make_executor()
+
+        context, trace = executor.run(
+            workflow,
             start="load_work",
             payload=initial_payload,
             ctx=initial_context,
@@ -115,7 +118,10 @@ class TestWorkflowExecution:
             ),
         )
 
-        context, trace = workflow.run(
+        executor = self._make_executor()
+
+        context, trace = executor.run(
+            workflow,
             start="load_orders",
             payload={"batch_id": "B-99"},
             ctx={"events": []},
@@ -338,3 +344,8 @@ class TestWorkflowExecution:
             ],
             "attempt_log": payload["attempt_log"],
         }
+
+    def _make_executor(self):
+        from py_workflow import InProcessExecutor
+
+        return InProcessExecutor()

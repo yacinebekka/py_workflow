@@ -4,6 +4,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
+from .executors import Executor, InProcessExecutor
+
 Action = Callable[[Dict[str, Any], Any], Any]
 Decision = Callable[[Dict[str, Any], "Result", "Enqueue"], None]
 
@@ -23,6 +25,7 @@ class Step:
     name: str
     action: Action
     decision: Optional[Decision] = None
+    executor: Optional[Executor] = None
 
 
 @dataclass
@@ -90,9 +93,15 @@ def decide_if(
 
 
 class Workflow:
-    def __init__(self, *, name: str = "workflow") -> None:
+    def __init__(
+        self,
+        *,
+        name: str = "workflow",
+        executor: Optional[Executor] = None,
+    ) -> None:
         self.name = name
         self._steps: Dict[str, Step] = {}
+        self._default_executor: Executor = executor or InProcessExecutor()
 
     def add(self, *steps: Step) -> "Workflow":
         for step in steps:
@@ -108,10 +117,15 @@ class Workflow:
             raise UnknownStep(name) from exc
 
     def _execute_step(
-        self, step: Step, context: Dict[str, Any], payload: Any
+        self,
+        step: Step,
+        context: Dict[str, Any],
+        payload: Any,
+        default_executor: Executor,
     ) -> Result:
+        executor = self._resolve_executor(step, default_executor)
         try:
-            value = step.action(context, payload)
+            value = executor.execute(step, context, payload)
             return Result(ok=True, value=value)
         except BaseException as exc:  # pragma: no cover
             return Result(ok=False, value=None, error=exc)
@@ -120,6 +134,11 @@ class Workflow:
         self, context: Dict[str, Any], step_name: str, result: Result
     ) -> None:
         context[f"result.{step_name}"] = result.value if result.ok else None
+
+    def _resolve_executor(
+        self, step: Step, default_executor: Executor
+    ) -> Executor:
+        return step.executor or default_executor
 
     def _trace_entry(
         self,
@@ -145,6 +164,7 @@ class Workflow:
         ctx: Optional[Dict[str, Any]] = None,
         max_steps: int = 10000,
         capture_trace: bool = True,
+        executor: Optional[Executor] = None,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         if start not in self._steps:
             raise UnknownStep(start)
@@ -153,6 +173,7 @@ class Workflow:
         queue: Deque[Token] = deque([Token(start, payload)])
         trace: List[Dict[str, Any]] = []
         steps_run = 0
+        default_executor = executor or self._default_executor
 
         while queue:
             if steps_run >= max_steps:
@@ -162,7 +183,12 @@ class Workflow:
 
             token = queue.popleft()
             step = self._require_step(token.step)
-            result = self._execute_step(step, context, token.payload)
+            result = self._execute_step(
+                step,
+                context,
+                token.payload,
+                default_executor,
+            )
 
             enqueue = Enqueue(queue, default_payload=result.value)
             if step.decision:

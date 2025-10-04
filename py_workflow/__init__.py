@@ -8,6 +8,7 @@ from .engine import (
     decide_if,
     decide_to,
 )
+from .executors import Executor, InProcessExecutor
 
 __all__ = [
     "Enqueue",
@@ -18,4 +19,6 @@ __all__ = [
     "Workflow",
     "decide_if",
     "decide_to",
+    "Executor",
+    "InProcessExecutor",
 ]
