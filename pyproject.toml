@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py-workflow"
+version = "0.1.0"
+description = "Lightweight workflow engine with pluggable executors and structured logging"
+readme = "README.md"
+authors = [
+    {name = "py_workflow maintainers"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.12"
+dependencies = []
+
+[project.urls]
+Homepage = "https://example.com/py-workflow"
+Repository = "https://example.com/py-workflow.git"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["py_workflow*"]
