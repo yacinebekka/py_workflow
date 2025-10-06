@@ -1,10 +1,8 @@
 # py_workflow
 
-`py_workflow` is a lightweight, test-first workflow engine. It lets you stitch
+`py_workflow` is a lightweight workflow engine. It lets you stitch
 simple Python callables together into business-flavoured workflows with
 pluggable executors, structured logging, retries, and decision-based routing.
-All behaviour is captured by a comprehensive acceptance and unit test suite so
-you can evolve the engine with confidence.
 
 ## Installation
 
